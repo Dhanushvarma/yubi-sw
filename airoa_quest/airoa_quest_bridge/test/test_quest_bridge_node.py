@@ -353,7 +353,7 @@ def test_publish_joy_left_axes_and_buttons(node_module):
     assert left.header.stamp == "STAMP"
     assert left.axes[0] == pytest.approx(0.4)  # leftJoystick.x
     assert left.axes[1] == pytest.approx(-0.5)  # leftJoystick.y
-    # Analog trigger / grip values are NaN under the legacy TCP/JSON protocol.
+    # Analog trigger / grip values are NaN when the app does not send them.
     assert math.isnan(left.axes[2])
     assert math.isnan(left.axes[3])
     # Buttons in the order documented next to _publish_controller_joy:
@@ -401,3 +401,27 @@ def test_publish_joy_right_axes_and_buttons(node_module):
         1,  # rightIndexTriggerTouched
         0,
     ]
+
+
+def test_publish_joy_analog_trigger_and_grip_values(node_module):
+    """Apps that send {left,right}{Trigger,Grip}Value fill axes[2] / axes[3]."""
+    node = _make_node(node_module)
+    node._transport._connected = True
+    frame = _make_frame(
+        node_module,
+        raw_overrides={
+            "leftTriggerValue": 0.75,
+            "leftGripValue": 0.25,
+            "rightTriggerValue": 1,
+            "rightGripValue": "bogus",
+        },
+    )
+
+    node._publish_joy_from_data(frame.raw, stamp="STAMP")
+    left = node.published["/quest/controller/left/joy"][0]
+    right = node.published["/quest/controller/right/joy"][0]
+
+    assert left.axes[2] == pytest.approx(0.75)
+    assert left.axes[3] == pytest.approx(0.25)
+    assert right.axes[2] == pytest.approx(1.0)
+    assert math.isnan(right.axes[3])

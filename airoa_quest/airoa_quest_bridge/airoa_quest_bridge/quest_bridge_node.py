@@ -236,6 +236,13 @@ _TOPIC_PARAMS: Tuple[Tuple[str, str], ...] = (
 )
 
 
+def _analog_value(value: Any) -> float:
+    """Return an analog axis as float, or NaN when the protocol omits it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return float("nan")
+    return float(value)
+
+
 # Field-name maps for the per-controller QuestController message. Keeping the
 # raw protocol keys here (rather than scattered across publishers) so the
 # mapping for a future protocol switch lives next to the legacy one.
@@ -251,6 +258,8 @@ _CONTROLLER_KEYS = {
         "trigger_press": "leftTriggerPressed",
         "trigger_touch": "leftIndexTriggerTouched",
         "grip_press": "leftGripPressed",
+        "trigger_value": "leftTriggerValue",
+        "grip_value": "leftGripValue",
         "primary_press": "buttonXPressed",
         "primary_touch": "buttonXTouched",
         "secondary_press": "buttonYPressed",
@@ -268,6 +277,8 @@ _CONTROLLER_KEYS = {
         "trigger_press": "rightTriggerPressed",
         "trigger_touch": "rightIndexTriggerTouched",
         "grip_press": "rightGripPressed",
+        "trigger_value": "rightTriggerValue",
+        "grip_value": "rightGripValue",
         "primary_press": "buttonAPressed",
         "primary_touch": "buttonATouched",
         "secondary_press": "buttonBPressed",
@@ -781,8 +792,9 @@ class QuestBridgeNode(Node):
         return self._hand_controller_transforms[key]
 
     # Per-controller sensor_msgs/Joy axis / button layout. axes[2] (trigger) and
-    # axes[3] (grip) are NaN under the current TCP/JSON protocol; they will
-    # carry analog 0..1 values once the yubi_quest_app UDP transport lands.
+    # axes[3] (grip) carry analog 0..1 values when the app sends
+    # {left,right}{Trigger,Grip}Value, and are NaN otherwise (the stock v0.1.0
+    # APK does not send them).
     #
     # axes:
     #   [0] joystick_x
@@ -823,8 +835,8 @@ class QuestBridgeNode(Node):
         joy.axes = [
             float(joystick.get("x", 0.0) or 0.0),
             float(joystick.get("y", 0.0) or 0.0),
-            float("nan"),
-            float("nan"),
+            _analog_value(data.get(keys["trigger_value"])),
+            _analog_value(data.get(keys["grip_value"])),
         ]
         joy.buttons = [
             int(bool(data.get(keys["primary_press"], False))),
