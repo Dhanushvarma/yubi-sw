@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "quest_bridge_node = airoa_quest_bridge.quest_bridge_node:main",
+            "quest_camera_node = airoa_quest_bridge.quest_camera_node:main",
         ],
     },
 )
