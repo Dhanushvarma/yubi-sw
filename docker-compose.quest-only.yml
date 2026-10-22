@@ -2,15 +2,29 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.quest-only.yml up -d
 #
-# The rig uses no USB hardware, so containers run unprivileged without /dev or
+# The rig uses no USB hardware, so containers run unprivileged (with a DDS
+# profile that does not force 10MB socket buffers) without /dev or
 # /etc/yubi, and recordings and MinIO data live in named volumes instead of
 # host paths. config-init runs as HOST_UID:HOST_GID (default 1000:1000) so
 # config/_runtime/ is not root-owned.
 
 services:
+  # minio/minio and minio/mc can no longer be pulled from Docker Hub (or
+  # quay.io without login), so use Bitnami's frozen MinIO build for local
+  # dev. It creates the "data" bucket itself, which replaces minio-init.
   minio:
+    image: bitnamilegacy/minio:2025.5.24
+    environment:
+      MINIO_DEFAULT_BUCKETS: data
+      MINIO_CONSOLE_PORT_NUMBER: "9001"
+    command: !reset []
     volumes: !override
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+
+  minio-init:
+    profiles: ["disabled"]
 
   config-init:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -32,7 +46,7 @@ services:
       - ./airoa_quest/:/root/ros2_ws/src/airoa_quest/
       - yubi_data:/opt/data
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+      - ./yubi_bringup/docker/cyclonedds_profile.unprivileged.xml:/root/cyclonedds_profile.xml
 
   yubi_core:
     privileged: false
@@ -42,7 +56,7 @@ services:
       - ./yubi-core/yubi-core:/root/ros2_ws/src/yubi_core
       - ./yubi-core/airoa_data_msgs:/root/ros2_ws/src/airoa_data_msgs
       - ./airoa_quest:/root/ros2_ws/src/airoa_quest
-      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+      - ./yubi_bringup/docker/cyclonedds_profile.unprivileged.xml:/root/cyclonedds_profile.xml
       - yubi_data:/opt/data
       - ./yubi_bringup/config/_runtime/${ROBOT_VARIANT:-quest_only}/robot_config.yaml:/root/ros2_ws/install/yubi_core/share/yubi_core/config/robot_config.yaml
       - ./yubi_bringup/config/_runtime/${ROBOT_VARIANT:-quest_only}/recording_gate.yaml:/root/ros2_ws/install/yubi_core/share/yubi_core/config/recording_gate.yaml
@@ -51,7 +65,7 @@ services:
   web_video_server:
     privileged: false
     volumes: !override
-      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+      - ./yubi_bringup/docker/cyclonedds_profile.unprivileged.xml:/root/cyclonedds_profile.xml
 
 volumes:
   minio_data:

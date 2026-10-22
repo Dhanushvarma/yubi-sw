@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Same as cyclonedds_profile.xml, for containers that are not privileged
+  (docker-compose.quest-only.yml). The 10MB socket buffers are requested
+  rather than required: without CAP_NET_ADMIN the kernel caps them at
+  net.core.rmem_max / wmem_max, and a hard min="10MB" makes domain creation fail.
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+          <NetworkInterface name="lo"/>
+      </Interfaces>
+    </General>
+    <Discovery>
+      <Peers>
+        <Peer Address="localhost"/>
+      </Peers>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
+    </Discovery>
+    <Internal>
+      <SocketReceiveBufferSize min="default" max="10MB"/>
+      <SocketSendBufferSize min="default" max="10MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>
