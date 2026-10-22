@@ -1,0 +1,36 @@
+# Quest-only — overlay onto common/robot_config.yaml
+# Sets robot_type and replaces record_topics with what a bare Quest 3 rig
+# publishes. /rosout and /parameter_events are left out on purpose: rebake's
+# sync window starts at the latest first message across all recorded topics,
+# so a late low-rate topic truncates the episode.
+
+/**:
+  ros__parameters:
+    robot_type: "yubi-quest"
+
+    record_topics:
+      # Head camera (quest_camera_node, Quest passthrough camera via yubi-quest-app).
+      - "/center_camera/camera_info"
+      - "/center_camera/image_raw/compressed"
+      # Gripper joints driven by the analog trigger (trigger_gripper_node).
+      - "/joint_states"
+      - "/yubi/gripper/left/joint_state"
+      - "/yubi/gripper/right/joint_state"
+      - "/quest/hmd/state"
+      - "/quest/hmd/battery"
+      - "/quest/controller/left/state"
+      - "/quest/controller/left/joy"
+      - "/quest/controller/left/battery"
+      - "/quest/controller/left/tracked"
+      - "/quest/controller/left/valid"
+      - "/quest/controller/right/state"
+      - "/quest/controller/right/joy"
+      - "/quest/controller/right/battery"
+      - "/quest/controller/right/tracked"
+      - "/quest/controller/right/valid"
+      # Aggregated joy stream consumed by task_command_dispatch_node.
+      - "/portable_joy_command"
+      - "/tf"
+      - "/tf_static"
+      - "/diagnostics"
+      - "/recording_gate/gate_level"

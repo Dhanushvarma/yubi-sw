@@ -11,6 +11,8 @@ Merge semantics (deep_merge):
   - dict + dict       -> recursive merge per key (b wins on scalar conflict)
   - list + list       -> b replaces a entirely
   - list + {__extend__: [...]} -> append unique items from extend list to base list
+  - key: "__delete__" -> removes key from the merged dict (lets a variant drop a
+                         common entry, e.g. a recording-gate condition)
   - scalar override   -> b wins
 """
 
@@ -25,6 +27,8 @@ import yaml
 
 
 MERGED_FILES = ("robot_config.yaml", "recording_gate.yaml", "upload_targets.yaml")
+
+DELETE_SENTINEL = "__delete__"
 
 
 def deep_merge(base: Any, overlay: Any) -> Any:
@@ -47,7 +51,9 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     if isinstance(base, dict) and isinstance(overlay, dict):
         result = dict(base)
         for key, overlay_val in overlay.items():
-            if key in result:
+            if overlay_val == DELETE_SENTINEL:
+                result.pop(key, None)
+            elif key in result:
                 result[key] = deep_merge(result[key], overlay_val)
             else:
                 result[key] = overlay_val

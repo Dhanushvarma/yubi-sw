@@ -18,6 +18,10 @@ setup(
             glob("config/stationary/*.yaml"),
         ),
         ("share/" + package_name + "/config/portable", glob("config/portable/*.yaml")),
+        (
+            "share/" + package_name + "/config/quest_only",
+            glob("config/quest_only/*.yaml"),
+        ),
         # local/ holds per-host overrides (gitignored). Installed when present so
         # the launch file can pick them up; users must re-run colcon build after
         # creating a new local/<file>.yaml.
@@ -41,6 +45,7 @@ setup(
             "encoder_node = yubi_bringup.encoder_node:main",
             "gripper_double_click_node = yubi_bringup.gripper_double_click_node:main",
             "portable_joy_command_node = yubi_bringup.portable_joy_command_node:main",
+            "trigger_gripper_node = yubi_bringup.trigger_gripper_node:main",
         ],
     },
 )

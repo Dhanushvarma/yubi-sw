@@ -1,0 +1,54 @@
+# Quest-only — overlay onto common/yubi_devices.yaml
+# A Meta Quest 3 plus its Touch Plus controllers and nothing else: no YUBI
+# gloves (encoders, wrist cameras), no head camera, no footpedal. Drops the
+# common hand cameras and encoder_node, keeps quest_bridge_node, and takes
+# operator commands from Quest buttons only.
+
+yubi_variant:
+  ros__parameters:
+    disabled_nodes:
+      - "left_camera/usb_cam"
+      - "right_camera/usb_cam"
+      - "encoder_node"
+
+task_command_dispatch_node:
+  ros__parameters:
+    # Same /portable_joy_command layout as portable; with no gloves the
+    # double-click inputs never fire, so only the Quest buttons drive it:
+    #   [0] quest_x  -> cancel episode
+    #   [1] quest_b  -> reject
+    #   [2] quest_a  -> accept
+    joy_accept_button: 2
+    joy_reject_button: 1
+    joy_cancel_episode_button: 0
+    joy_rewind_button: -1
+
+# Head camera: the Quest's front passthrough camera, streamed by
+# yubi-quest-app on TCP 65433 and published as /center_camera/*.
+# Set quest_ip in config/local/yubi_devices.yaml (same value as
+# quest_bridge_node.quest_ip).
+quest_camera_node:
+  ros__parameters:
+    tcp_port: 65433
+    parent_frame: "quest_hmd"
+    camera_frame: "center_camera_link"
+    optical_frame: "center_camera_optical_frame"
+    image_topic: "/center_camera/image_raw/compressed"
+    camera_info_topic: "/center_camera/camera_info"
+
+# Replaces encoder_node: the controller's analog index trigger drives the
+# gripper joint (released = open, pulled = closed), published on the same
+# topics as encoder_node. Needs an app that sends {left,right}TriggerValue;
+# with the stock v0.1.0 APK the axis is NaN and nothing is published.
+trigger_gripper_node:
+  ros__parameters:
+    left_joint_name: "left_right_finger_joint"
+    right_joint_name: "right_right_finger_joint"
+    publish_rate_hz: 100.0
+    open_position_rad: 0.94
+    closed_position_rad: 0.0
+
+# Presence marker — aggregates Quest buttons into /portable_joy_command
+# (consumed by task_command_dispatch_node via the joy_remap_topic launch arg).
+portable_joy_command_node:
+  ros__parameters: {}

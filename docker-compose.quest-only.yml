@@ -1,0 +1,58 @@
+# Quest-only rig (ROBOT_VARIANT=quest_only), layered on docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.quest-only.yml up -d
+#
+# The rig uses no USB hardware, so containers run unprivileged without /dev or
+# /etc/yubi, and recordings and MinIO data live in named volumes instead of
+# host paths. config-init runs as HOST_UID:HOST_GID (default 1000:1000) so
+# config/_runtime/ is not root-owned.
+
+services:
+  minio:
+    volumes: !override
+      - minio_data:/data
+
+  config-init:
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - HOME=/tmp
+      - PYTHONDONTWRITEBYTECODE=1
+    command: !override
+      - sh
+      - -c
+      - "pip install --quiet --user pyyaml && python /work/yubi_bringup/tools/build_runtime_configs.py --variant ${ROBOT_VARIANT:-quest_only} --with-local"
+
+  yubi:
+    privileged: false
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes: !override
+      - ./yubi_bringup/:/root/ros2_ws/src/yubi_bringup/
+      - ./yubi_description/:/root/ros2_ws/src/yubi_description/
+      - ./airoa_quest/:/root/ros2_ws/src/airoa_quest/
+      - yubi_data:/opt/data
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+
+  yubi_core:
+    privileged: false
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes: !override
+      - ./yubi-core/yubi-core:/root/ros2_ws/src/yubi_core
+      - ./yubi-core/airoa_data_msgs:/root/ros2_ws/src/airoa_data_msgs
+      - ./airoa_quest:/root/ros2_ws/src/airoa_quest
+      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+      - yubi_data:/opt/data
+      - ./yubi_bringup/config/_runtime/${ROBOT_VARIANT:-quest_only}/robot_config.yaml:/root/ros2_ws/install/yubi_core/share/yubi_core/config/robot_config.yaml
+      - ./yubi_bringup/config/_runtime/${ROBOT_VARIANT:-quest_only}/recording_gate.yaml:/root/ros2_ws/install/yubi_core/share/yubi_core/config/recording_gate.yaml
+      - ./yubi_bringup/config/_runtime/${ROBOT_VARIANT:-quest_only}/upload_targets.yaml:/root/ros2_ws/install/yubi_core/share/yubi_core/config/upload_targets.yaml
+
+  web_video_server:
+    privileged: false
+    volumes: !override
+      - ./yubi_bringup/docker/cyclonedds_profile.xml:/root/cyclonedds_profile.xml
+
+volumes:
+  minio_data:
+  yubi_data:

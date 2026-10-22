@@ -10,7 +10,7 @@ package — so each launch only spawns its own concern:
 
 - BRINGUP_NODE_REGISTRY     ← yubi_bringup.launch.py
     Hardware/IO nodes brought up regardless of whether data collection runs.
-    (USB cameras, head camera, Quest bridge, encoder.)
+    (USB cameras, head camera, Quest bridge, encoder or trigger gripper.)
 
 - DATA_COLLECTION_NODE_REGISTRY ← yubi_data_collection.launch.py
     Nodes specific to data-collection runs (footpedal, dispatch).
@@ -40,9 +40,20 @@ import yaml
 # path (URDF-only, fixed-port services, dev-only tooling).
 STRUCTURAL_NODE_KEYS = frozenset(
     {
-        # No YAML keys for these in yubi_devices.yaml today.
+        # Variant metadata, not a node (see collect_yaml_keys).
+        "yubi_variant",
     }
 )
+
+# A variant overlay can drop nodes that common/yubi_devices.yaml declares:
+#
+#   yubi_variant:
+#     ros__parameters:
+#       disabled_nodes: ["encoder_node", "left_camera/usb_cam"]
+#
+# The entry is shaped like a ROS param section so the file stays a valid
+# --params-file; no node is named yubi_variant, so ROS ignores it.
+VARIANT_META_KEY = "yubi_variant"
 
 
 def _factory_usb_cam(namespace: str):
@@ -77,6 +88,20 @@ def _factory_quest_bridge(params):
     )
 
 
+def _factory_quest_camera(params):
+    from launch_ros.actions import Node
+
+    return Node(
+        package="airoa_quest_bridge",
+        executable="quest_camera_node",
+        name="quest_camera_node",
+        output="screen",
+        respawn=True,
+        respawn_delay=2.0,
+        parameters=params,
+    )
+
+
 def _factory_encoder(params):
     from launch_ros.actions import Node
 
@@ -92,6 +117,20 @@ def _factory_encoder(params):
         respawn=True,
         respawn_delay=2.0,
         parameters=encoder_params,
+    )
+
+
+def _factory_trigger_gripper(params):
+    from launch_ros.actions import Node
+
+    return Node(
+        package="yubi_bringup",
+        executable="trigger_gripper_node",
+        name="trigger_gripper_node",
+        output="screen",
+        respawn=True,
+        respawn_delay=2.0,
+        parameters=params,
     )
 
 
@@ -175,7 +214,9 @@ BRINGUP_NODE_REGISTRY = [
     {"yaml_key": "center_camera/usb_cam", "factory": _factory_usb_cam("center_camera")},
     {"yaml_key": "/camera/camera", "factory": _factory_realsense},
     {"yaml_key": "quest_bridge_node", "factory": _factory_quest_bridge},
+    {"yaml_key": "quest_camera_node", "factory": _factory_quest_camera},
     {"yaml_key": "encoder_node", "factory": _factory_encoder},
+    {"yaml_key": "trigger_gripper_node", "factory": _factory_trigger_gripper},
 ]
 
 
@@ -201,8 +242,13 @@ NODE_REGISTRY = BRINGUP_NODE_REGISTRY + DATA_COLLECTION_NODE_REGISTRY
 
 
 def collect_yaml_keys(yaml_paths: Iterable[Path | str]) -> set[str]:
-    """Return the union of top-level keys from given YAML files. Missing files are skipped."""
+    """Return the union of top-level keys from given YAML files. Missing files are skipped.
+
+    Keys listed in any file's `yubi_variant.ros__parameters.disabled_nodes` are
+    removed from the result, as is the `yubi_variant` key itself.
+    """
     keys: set[str] = set()
+    disabled: set[str] = set()
     for path in yaml_paths:
         p = Path(path)
         if not p.exists():
@@ -211,7 +257,9 @@ def collect_yaml_keys(yaml_paths: Iterable[Path | str]) -> set[str]:
             data = yaml.safe_load(f) or {}
         if isinstance(data, dict):
             keys.update(data.keys())
-    return keys
+            meta = (data.get(VARIANT_META_KEY) or {}).get("ros__parameters") or {}
+            disabled.update(meta.get("disabled_nodes") or [])
+    return keys - disabled - {VARIANT_META_KEY}
 
 
 def select_nodes(

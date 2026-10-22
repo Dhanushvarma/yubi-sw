@@ -1,0 +1,7 @@
+# Quest-only — overlay onto common/recording_gate.yaml
+# There are no hand cameras or gripper encoders, so the whole common health
+# group is dropped. The TF, Quest tracking and subtask-duration groups apply
+# unchanged.
+
+groups:
+  health: "__delete__"

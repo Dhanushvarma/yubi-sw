@@ -6,6 +6,7 @@ Covers:
 - TestNoOpRefactor     — stationary _runtime/ matches the pre-refactor legacy
                          single-file snapshots in test/fixtures/legacy_stationary/
 - TestPortableInvariants — structure assertions for portable variant outputs
+- TestQuestOnlyInvariants — structure assertions for quest_only variant outputs
 - TestNodeRegistry     — registry <-> YAML key bidirectional consistency
 """
 
@@ -78,6 +79,19 @@ class TestDeepMerge:
     def test_extend_requires_list_value(self):
         with pytest.raises(ValueError):
             merger.deep_merge([1, 2], {"__extend__": "not-a-list"})
+
+    def test_delete_removes_key(self):
+        assert merger.deep_merge({"a": 1, "b": {"c": 2}}, {"b": "__delete__"}) == {
+            "a": 1
+        }
+
+    def test_delete_nested(self):
+        assert merger.deep_merge(
+            {"g": {"x": {"t": 1}, "y": {"t": 2}}}, {"g": {"x": "__delete__"}}
+        ) == {"g": {"y": {"t": 2}}}
+
+    def test_delete_missing_key_is_noop(self):
+        assert merger.deep_merge({"a": 1}, {"b": "__delete__"}) == {"a": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -342,13 +356,67 @@ class TestPortableInvariants:
 
 
 # ---------------------------------------------------------------------------
+# TestQuestOnlyInvariants — quest_only structure assertions
+# ---------------------------------------------------------------------------
+class TestQuestOnlyInvariants:
+    @pytest.fixture(scope="class")
+    def quest_only_runtime(self):
+        merger.build(config_root=CONFIG_ROOT, variant="quest_only", with_local=False)
+        return CONFIG_ROOT / "_runtime" / "quest_only"
+
+    def test_robot_type(self, quest_only_runtime):
+        with (quest_only_runtime / "robot_config.yaml").open() as f:
+            data = yaml.safe_load(f)
+        assert data["/**"]["ros__parameters"]["robot_type"] == "yubi-quest"
+
+    def test_record_topics_only_quest_hardware(self, quest_only_runtime):
+        with (quest_only_runtime / "robot_config.yaml").open() as f:
+            data = yaml.safe_load(f)
+        rt = data["/**"]["ros__parameters"]["record_topics"]
+        assert "/quest/controller/left/joy" in rt
+        assert "/portable_joy_command" in rt
+        assert "/tf" in rt and "/tf_static" in rt
+        for absent in (
+            "/left_camera/image_raw/compressed",
+            "/right_camera/image_raw/compressed",
+            "/footpedal_states",
+            "/rosout",
+            "/parameter_events",
+        ):
+            assert absent not in rt, f"quest_only record_topics should not include {absent}"
+
+    def test_recording_gate_drops_health_group(self, quest_only_runtime):
+        with (quest_only_runtime / "recording_gate.yaml").open() as f:
+            data = yaml.safe_load(f)
+        assert "health" not in data["groups"]
+        assert {"tf", "vr_tracking", "duration_limits"} <= set(data["groups"])
+
+    def test_launched_nodes(self):
+        from yubi_bringup.launch_registry import collect_yaml_keys  # noqa: WPS433
+
+        keys = collect_yaml_keys(
+            [
+                CONFIG_ROOT / "common" / "yubi_devices.yaml",
+                CONFIG_ROOT / "quest_only" / "yubi_devices.yaml",
+            ]
+        )
+        assert keys == {
+            "quest_bridge_node",
+            "quest_camera_node",
+            "trigger_gripper_node",
+            "task_command_dispatch_node",
+            "portable_joy_command_node",
+        }
+
+
+# ---------------------------------------------------------------------------
 # TestNodeRegistry — registry <-> YAML key bidirectional consistency
 # ---------------------------------------------------------------------------
 class TestNodeRegistry:
     @pytest.fixture(scope="class")
     def keys_per_variant(self):
         keys = {}
-        for variant in ("common", "stationary", "portable"):
+        for variant in ("common", "stationary", "portable", "quest_only"):
             with (CONFIG_ROOT / variant / "yubi_devices.yaml").open() as f:
                 data = yaml.safe_load(f) or {}
             keys[variant] = set(data.keys())
@@ -403,3 +471,15 @@ class TestNodeRegistry:
         f2 = tmp_path / "b.yaml"
         _write_yaml(f2, {"y": 3, "z": 4})  # y is shared
         assert collect_yaml_keys([f1, f2, tmp_path / "missing.yaml"]) == {"x", "y", "z"}
+
+    def test_collect_yaml_keys_disabled_nodes(self, tmp_path):
+        from yubi_bringup.launch_registry import collect_yaml_keys  # noqa: WPS433
+
+        f1 = tmp_path / "common.yaml"
+        _write_yaml(f1, {"x": 1, "y": 2})
+        f2 = tmp_path / "variant.yaml"
+        _write_yaml(
+            f2,
+            {"yubi_variant": {"ros__parameters": {"disabled_nodes": ["x"]}}, "z": 3},
+        )
+        assert collect_yaml_keys([f1, f2]) == {"y", "z"}
