@@ -385,11 +385,25 @@ class TestQuestOnlyInvariants:
         ):
             assert absent not in rt, f"quest_only record_topics should not include {absent}"
 
-    def test_recording_gate_drops_health_group(self, quest_only_runtime):
+    def test_recording_gate_conditions(self, quest_only_runtime):
         with (quest_only_runtime / "recording_gate.yaml").open() as f:
             data = yaml.safe_load(f)
-        assert "health" not in data["groups"]
-        assert {"tf", "vr_tracking", "duration_limits"} <= set(data["groups"])
+        assert {"health", "tf", "vr_tracking", "duration_limits"} <= set(data["groups"])
+        conditions = data["groups"]["health"]["conditions"]
+        assert not any(name.startswith(("left_camera", "right_camera")) for name in conditions)
+        for side in ("left", "right"):
+            gripper = conditions[f"{side}_gripper_joint_state_timeout_stop"]
+            assert gripper["topic"] == f"/yubi/gripper/{side}/joint_state"
+            assert gripper["timeout_sec"] == 0.5
+        for key in (
+            "head_camera_warn",
+            "head_camera_stop",
+            "head_camera_timeout_warn",
+            "head_camera_timeout_stop",
+        ):
+            assert conditions[key]["topic"] == "/center_camera/camera_info"
+        assert conditions["head_camera_warn"]["min_rate_hz"] == 25.0
+        assert conditions["head_camera_stop"]["min_rate_hz"] == 12.0
 
     def test_launched_nodes(self):
         from yubi_bringup.launch_registry import collect_yaml_keys  # noqa: WPS433
