@@ -109,7 +109,10 @@ services:
     profiles: ["build-only"]
 
   yubi_core:
-    image: yubi-core:latest
+    # yubi:latest is built FROM yubi-core:latest and adds airoa_quest_msgs and
+    # realsense2_camera_msgs. ros2 bag record runs here and needs their type
+    # support, otherwise /quest/*/state and RealSense extrinsics are not recorded.
+    image: yubi:latest
     container_name: yubi_core
     privileged: true
     network_mode: host
