@@ -401,3 +401,211 @@ def test_publish_joy_right_axes_and_buttons(node_module):
         1,  # rightIndexTriggerTouched
         0,
     ]
+
+
+# ---------------------------------------------------------------------------
+# Body tracking (optional ``body`` section)
+# ---------------------------------------------------------------------------
+
+
+def _body_payload(count=70, flags=0xF, fidelity=2):
+    """A body section where joint i sits at Unity (0.01 i, 1 + 0.01 i, 0.5)."""
+    joints = []
+    for i in range(count):
+        joints += [0.01 * i, 1.0 + 0.01 * i, 0.5, 0.0, 0.0, 0.0, 1.0]
+    return {
+        "time": 12.5,
+        "confidence": 0.8,
+        "fidelity": fidelity,
+        "calibration": 1,
+        "skeletonChangedCount": 3,
+        "joints": joints,
+        "flags": [flags] * count,
+    }
+
+
+def test_body_joint_names_follow_ovr_bone_ids(node_module):
+    names = node_module.BODY_JOINT_NAMES
+    assert len(names) == 70
+    assert len(set(names)) == 70
+    assert names[5] == "Body_Chest"
+    assert names[10] == "Body_LeftArmUpper"
+    assert names[11] == "Body_LeftArmLower"
+    assert names[15] == "Body_RightArmUpper"
+    assert names[16] == "Body_RightArmLower"
+    assert names[18] == "Body_LeftHandPalm"
+    assert names[19] == "Body_LeftHandWrist"
+    assert names[43] == "Body_LeftHandLittleTip"
+    assert names[44] == "Body_RightHandPalm"
+    assert names[45] == "Body_RightHandWrist"
+    assert names[69] == "Body_RightHandLittleTip"
+
+
+def test_body_tf_joints_exist_in_name_table(node_module):
+    for name, _suffix in node_module.BODY_TF_JOINTS:
+        assert name in node_module.BODY_JOINT_NAMES
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"body": None},
+        {"body": {"joints": [0.0] * 6, "flags": [3]}},
+        {"body": {"joints": [0.0] * 14, "flags": [3]}},
+        {"body": {"joints": [0.0] * 7}},
+        {"body": {"joints": ["x"] * 7, "flags": [3]}},
+        {"body": {"joints": [], "flags": []}},
+    ],
+)
+def test_parse_body_rejects_absent_or_malformed(node_module, raw):
+    assert node_module._parse_body(raw) is None
+
+
+def test_parse_body_converts_poses_to_ros(node_module):
+    raw = {
+        "body": {
+            "time": 1.25,
+            "confidence": 0.5,
+            "fidelity": 2,
+            "calibration": 1,
+            "skeletonChangedCount": 7,
+            "joints": [1.0, 2.0, 3.0, 0.0, 0.7071068, 0.0, 0.7071068],
+            "flags": [15],
+        }
+    }
+
+    body = node_module._parse_body(raw)
+
+    assert body["time"] == pytest.approx(1.25)
+    assert body["confidence"] == pytest.approx(0.5)
+    assert body["fidelity"] == 2
+    assert body["calibration"] == 1
+    assert body["skeleton_changed_count"] == 7
+    assert body["flags"] == [15]
+    ((pos, quat),) = body["poses"]
+    # Unity (x right, y up, z forward) -> ROS (z, -x, y).
+    assert pos == pytest.approx((3.0, -1.0, 2.0))
+    _, expected_quat = node_module._unity_pose_to_ros(
+        (1.0, 2.0, 3.0), (0.0, 0.7071068, 0.0, 0.7071068)
+    )
+    assert quat == pytest.approx(expected_quat)
+
+
+def test_publish_body_message_fields(node_module):
+    node = _make_node(node_module)
+    frame = _make_frame(node_module, seq=5, raw_overrides={"body": _body_payload()})
+
+    node._publish_body(frame, recv_stamp="STAMP")
+
+    (msg,) = node.published["/quest/body/state"]
+    assert msg.header.stamp == "STAMP"
+    assert msg.header.frame_id == "quest_origin"
+    assert msg.device_time_ns == 1_500_000_000
+    assert msg.pc_monotonic_ns == 9_000_000_000
+    assert msg.seq == 5
+    assert msg.body_time_s == pytest.approx(12.5)
+    assert msg.confidence == pytest.approx(0.8)
+    assert msg.fidelity == 2
+    assert msg.calibration_status == 1
+    assert msg.skeleton_changed_count == 3
+    assert msg.joint_names == list(node_module.BODY_JOINT_NAMES)
+    assert len(msg.poses) == 70
+    assert msg.location_flags == [15] * 70
+    # Joint 11 (left elbow) at Unity (0.11, 1.11, 0.5) -> ROS (0.5, -0.11, 1.11).
+    elbow = msg.poses[11].position
+    assert (elbow.x, elbow.y, elbow.z) == pytest.approx((0.5, -0.11, 1.11))
+
+    (fidelity,) = node.published["/quest/body/fidelity"]
+    assert fidelity.data == 2
+
+
+def test_publish_body_names_joints_beyond_the_table(node_module):
+    node = _make_node(node_module)
+    frame = _make_frame(node_module, raw_overrides={"body": _body_payload(count=72)})
+
+    node._publish_body(frame, recv_stamp=None)
+
+    (msg,) = node.published["/quest/body/state"]
+    assert msg.joint_names[69] == "Body_RightHandLittleTip"
+    assert msg.joint_names[70:] == ["joint_70", "joint_71"]
+
+
+def test_publish_body_skips_frames_without_body(node_module):
+    node = _make_node(node_module)
+    node._transport._connected = True
+    frame = _make_frame(node_module)
+
+    node._publish_body(frame, recv_stamp=None)
+
+    assert node.published["/quest/body/state"] == []
+    assert node.published["/quest/body/fidelity"] == []
+    node._tf_broadcaster.sendTransform.assert_not_called()
+
+
+def test_publish_body_tf_sends_sew_frames(node_module):
+    node = _make_node(node_module)
+    node._transport._connected = True
+    frame = _make_frame(node_module, raw_overrides={"body": _body_payload()})
+
+    node._publish_body(frame, recv_stamp="STAMP")
+
+    node._tf_broadcaster.sendTransform.assert_called_once()
+    (transforms,), _ = node._tf_broadcaster.sendTransform.call_args
+    by_child = {t.child_frame_id: t for t in transforms}
+    assert set(by_child) == {
+        "body_chest",
+        "body_left_shoulder",
+        "body_left_elbow",
+        "body_left_wrist",
+        "body_right_shoulder",
+        "body_right_elbow",
+        "body_right_wrist",
+    }
+    for t in transforms:
+        assert t.header.frame_id == "quest_origin"
+        assert t.header.stamp == "STAMP"
+    # Right wrist is joint 45: Unity (0.45, 1.45, 0.5) -> ROS (0.5, -0.45, 1.45).
+    wrist = by_child["body_right_wrist"].transform.translation
+    assert (wrist.x, wrist.y, wrist.z) == pytest.approx((0.5, -0.45, 1.45))
+
+
+def test_publish_body_tf_skips_joints_without_valid_pose(node_module):
+    node = _make_node(node_module)
+    node._transport._connected = True
+    payload = _body_payload()
+    payload["flags"][11] = 0x1  # left elbow: orientation valid, position not
+    frame = _make_frame(node_module, raw_overrides={"body": payload})
+
+    node._publish_body(frame, recv_stamp=None)
+
+    (transforms,), _ = node._tf_broadcaster.sendTransform.call_args
+    children = {t.child_frame_id for t in transforms}
+    assert "body_left_elbow" not in children
+    assert "body_left_shoulder" in children
+
+
+def test_publish_body_tf_disabled(node_module):
+    node = _make_node(node_module)
+    node._transport._connected = True
+    node._publish_body_tf = False
+    frame = _make_frame(node_module, raw_overrides={"body": _body_payload()})
+
+    node._publish_body(frame, recv_stamp=None)
+
+    assert len(node.published["/quest/body/state"]) == 1
+    node._tf_broadcaster.sendTransform.assert_not_called()
+
+
+def test_collect_status_reports_body_fidelity(node_module):
+    node = _make_node(node_module)
+
+    node._latest_raw = {"body": {"fidelity": 2, "confidence": 0.9}}
+    status = node._collect_status()
+    assert status["body_fidelity"] == "high"
+    assert status["body_confidence"] == pytest.approx(0.9)
+
+    node._latest_raw = {"leftTracked": True}
+    status = node._collect_status()
+    assert status["body_fidelity"] == "none"
+    assert math.isnan(status["body_confidence"])

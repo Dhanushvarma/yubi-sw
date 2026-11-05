@@ -184,6 +184,10 @@ def mock_ros(monkeypatch):
         def __init__(self, data=0.0):
             self.data = data
 
+    class _UInt8:
+        def __init__(self, data=0):
+            self.data = data
+
     class _Header:
         def __init__(self):
             self.stamp = None
@@ -191,6 +195,7 @@ def mock_ros(monkeypatch):
 
     std_msgs_msg.Bool = _Bool
     std_msgs_msg.Float32 = _Float32
+    std_msgs_msg.UInt8 = _UInt8
     std_msgs_msg.Header = _Header
     monkeypatch.setitem(sys.modules, "std_msgs", std_msgs)
     monkeypatch.setitem(sys.modules, "std_msgs.msg", std_msgs_msg)
@@ -283,7 +288,16 @@ def mock_ros(monkeypatch):
             self.child_frame_id = ""
             self.transform = _Transform()
 
+    Point = _make_struct_class("Point", ["x", "y", "z"])
+
+    class _Pose:
+        def __init__(self):
+            self.position = Point()
+            self.orientation = Quaternion()
+
     geometry_msgs_msg.Vector3 = Vector3
+    geometry_msgs_msg.Point = Point
+    geometry_msgs_msg.Pose = _Pose
     geometry_msgs_msg.Quaternion = Quaternion
     geometry_msgs_msg.Transform = _Transform
     geometry_msgs_msg.TransformStamped = _TransformStamped
@@ -340,8 +354,25 @@ def mock_ros(monkeypatch):
             self.tracked = False
             self.valid = False
 
+    class _QuestBody:
+        def __init__(self):
+            self.header = _Header()
+            self.device_time_ns = 0
+            self.pc_monotonic_ns = 0
+            self.seq = 0
+            self.quest_id = ""
+            self.body_time_s = 0.0
+            self.confidence = 0.0
+            self.fidelity = 0
+            self.calibration_status = 0
+            self.skeleton_changed_count = 0
+            self.joint_names = []
+            self.poses = []
+            self.location_flags = []
+
     airoa_quest_msgs_msg.QuestHmd = _QuestHmd
     airoa_quest_msgs_msg.QuestController = _QuestController
+    airoa_quest_msgs_msg.QuestBody = _QuestBody
     monkeypatch.setitem(sys.modules, "airoa_quest_msgs", airoa_quest_msgs)
     monkeypatch.setitem(sys.modules, "airoa_quest_msgs.msg", airoa_quest_msgs_msg)
 
@@ -353,6 +384,7 @@ def mock_ros(monkeypatch):
     yield {
         "QuestHmd": _QuestHmd,
         "QuestController": _QuestController,
+        "QuestBody": _QuestBody,
         "TransformStamped": _TransformStamped,
         "Joy": _Joy,
     }

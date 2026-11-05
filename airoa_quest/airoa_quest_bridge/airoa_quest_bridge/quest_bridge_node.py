@@ -18,8 +18,18 @@ Publishes:
   * ``/quest/controller/{left,right}/joy``     (sensor_msgs/Joy; per-controller
                                                 analog axes and digital buttons)
   * ``/quest/controller/{left,right}/battery`` (sensor_msgs/BatteryState)
+  * ``/quest/body/state``                      (airoa_quest_msgs/QuestBody; only
+                                                when the app sends a ``body``
+                                                section, e.g. yubi-quest-app with
+                                                Inside-Out Body Tracking)
+  * ``/quest/body/fidelity``                   (std_msgs/UInt8; mirror of
+                                                ``state.fidelity`` for consumers
+                                                without the airoa_quest_msgs dep)
   * ``/tf``                                    (live RViz/Foxglove and IK
-                                                consumers such as umi_ik_checker)
+                                                consumers such as umi_ik_checker;
+                                                with body data also
+                                                ``body_{chest,left,right}_*``
+                                                shoulder/elbow/wrist frames)
   * ``/diagnostics``                           (diagnostic_msgs/DiagnosticArray;
                                                 canonical health channel —
                                                 ``connected``/``streaming``/
@@ -44,10 +54,10 @@ from rclpy.time import Time
 from rclpy.duration import Duration
 
 from sensor_msgs.msg import BatteryState, Joy
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, UInt8
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Pose, TransformStamped
 from tf2_ros import (
     Buffer,
     ConnectivityException,
@@ -57,7 +67,7 @@ from tf2_ros import (
     TransformListener,
 )
 
-from airoa_quest_msgs.msg import QuestController, QuestHmd
+from airoa_quest_msgs.msg import QuestBody, QuestController, QuestHmd
 
 from airoa_quest_bridge.transport.tcp_json import QuestFrame, TcpJsonTransport
 
@@ -164,6 +174,13 @@ def _fill_xyzw(quat, xyzw: Tuple[float, float, float, float]) -> None:
     quat.w = float(xyzw[3])
 
 
+def _make_pose(xyz, xyzw) -> Pose:
+    pose = Pose()
+    _fill_xyz(pose.position, xyz)
+    _fill_xyzw(pose.orientation, xyzw)
+    return pose
+
+
 def _get_xyz(obj: Dict[str, Any]) -> Optional[Tuple[float, float, float]]:
     if not isinstance(obj, dict):
         return None
@@ -179,6 +196,116 @@ def _get_xyzw(obj: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]
     try:
         return float(obj["x"]), float(obj["y"]), float(obj["z"]), float(obj["w"])
     except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Body tracking (optional ``body`` section of the pose stream).
+# ---------------------------------------------------------------------------
+
+# OVRPlugin.BoneId names for the upper-body joint set, in index order.
+_BODY_TORSO_AND_ARMS = (
+    "Body_Root",
+    "Body_Hips",
+    "Body_SpineLower",
+    "Body_SpineMiddle",
+    "Body_SpineUpper",
+    "Body_Chest",
+    "Body_Neck",
+    "Body_Head",
+    "Body_LeftShoulder",
+    "Body_LeftScapula",
+    "Body_LeftArmUpper",
+    "Body_LeftArmLower",
+    "Body_LeftHandWristTwist",
+    "Body_RightShoulder",
+    "Body_RightScapula",
+    "Body_RightArmUpper",
+    "Body_RightArmLower",
+    "Body_RightHandWristTwist",
+)
+_FINGER_BONES = (
+    ("Thumb", ("Metacarpal", "Proximal", "Distal", "Tip")),
+    ("Index", ("Metacarpal", "Proximal", "Intermediate", "Distal", "Tip")),
+    ("Middle", ("Metacarpal", "Proximal", "Intermediate", "Distal", "Tip")),
+    ("Ring", ("Metacarpal", "Proximal", "Intermediate", "Distal", "Tip")),
+    ("Little", ("Metacarpal", "Proximal", "Intermediate", "Distal", "Tip")),
+)
+
+
+def _hand_joint_names(side: str) -> Tuple[str, ...]:
+    names = [f"Body_{side}HandPalm", f"Body_{side}HandWrist"]
+    for finger, bones in _FINGER_BONES:
+        names.extend(f"Body_{side}Hand{finger}{bone}" for bone in bones)
+    return tuple(names)
+
+
+BODY_JOINT_NAMES: Tuple[str, ...] = (
+    _BODY_TORSO_AND_ARMS + _hand_joint_names("Left") + _hand_joint_names("Right")
+)
+
+# Joints also published as TF children of parent_frame, as
+# (BoneId name, frame suffix). Meta names each bone after the joint it starts
+# at: ArmUpper starts at the shoulder, ArmLower at the elbow.
+BODY_TF_JOINTS: Tuple[Tuple[str, str], ...] = (
+    ("Body_Chest", "chest"),
+    ("Body_LeftArmUpper", "left_shoulder"),
+    ("Body_LeftArmLower", "left_elbow"),
+    ("Body_LeftHandWrist", "left_wrist"),
+    ("Body_RightArmUpper", "right_shoulder"),
+    ("Body_RightArmLower", "right_elbow"),
+    ("Body_RightHandWrist", "right_wrist"),
+)
+
+# XrSpaceLocationFlags: orientation valid | position valid.
+_BODY_POSE_VALID = 0x1 | 0x2
+
+_BODY_FIDELITY_NAMES = {1: "low", 2: "high"}
+
+
+def _body_joint_name(index: int) -> str:
+    if index < len(BODY_JOINT_NAMES):
+        return BODY_JOINT_NAMES[index]
+    return f"joint_{index}"
+
+
+def _parse_body(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Parse the optional ``body`` section of one pose-stream sample.
+
+    Wire format (yubi-quest-app): ``time`` (s), ``confidence``, ``fidelity``,
+    ``calibration``, ``skeletonChangedCount``, ``joints`` (7 floats per joint:
+    Unity position x, y, z then rotation x, y, z, w, in the same tracking
+    space as the HMD and controllers) and ``flags`` (one XrSpaceLocationFlags
+    int per joint). Returns None when the section is absent or malformed, and
+    otherwise the poses converted to ROS as ``[(pos, quat), ...]``.
+    """
+    body = data.get("body")
+    if not isinstance(body, dict):
+        return None
+    joints = body.get("joints")
+    flags = body.get("flags")
+    if not isinstance(joints, list) or not joints or len(joints) % 7:
+        return None
+    count = len(joints) // 7
+    if not isinstance(flags, list) or len(flags) != count:
+        return None
+    try:
+        values = [float(v) for v in joints]
+        poses = [
+            _unity_pose_to_ros(values[i : i + 3], values[i + 3 : i + 7])
+            for i in range(0, len(values), 7)
+        ]
+        return {
+            "time": float(body.get("time", 0.0)),
+            "confidence": float(body.get("confidence", 0.0)),
+            "fidelity": int(body.get("fidelity", 0)) & 0xFF,
+            "calibration": int(body.get("calibration", 0)) & 0xFF,
+            "skeleton_changed_count": int(body.get("skeletonChangedCount", 0))
+            & 0xFFFFFFFF,
+            "poses": poses,
+            "flags": [int(f) & 0xFF for f in flags],
+        }
+    except (TypeError, ValueError):
         return None
 
 
@@ -215,6 +342,8 @@ _DIAG_FIELDS: Tuple[Tuple[str, Any], ...] = (
     ("left_batt_pct", _fmt_nan_int),
     ("right_batt_pct", _fmt_nan_int),
     ("hmd_charging", str),
+    ("body_fidelity", str),
+    ("body_confidence", lambda v: _fmt_nan_float(v, ".2f")),
 )
 
 
@@ -233,6 +362,8 @@ _TOPIC_PARAMS: Tuple[Tuple[str, str], ...] = (
     ("right_controller_joy_topic", "/quest/controller/right/joy"),
     ("left_controller_battery_topic", "/quest/controller/left/battery"),
     ("right_controller_battery_topic", "/quest/controller/right/battery"),
+    ("body_topic", "/quest/body/state"),
+    ("body_fidelity_topic", "/quest/body/fidelity"),
 )
 
 
@@ -302,6 +433,10 @@ class QuestBridgeNode(Node):
         self.declare_parameter("diag_period_sec", 0.5)
         self.declare_parameter("battery_status_hz", 1.0)
 
+        # Body tracking: TF frames <prefix><suffix> for BODY_TF_JOINTS.
+        self.declare_parameter("publish_body_tf", True)
+        self.declare_parameter("body_frame_prefix", "body_")
+
         # ---- Cached parameter values ------------------------------------
         # Read on every published frame; cache to avoid per-frame
         # get_parameter() lookups and Param object allocation.
@@ -314,6 +449,12 @@ class QuestBridgeNode(Node):
             "right_controller_frame"
         ).value
         self._hardware_id = self.get_parameter("quest_ip").value or "unset"
+        self._publish_body_tf = bool(self.get_parameter("publish_body_tf").value)
+        prefix = self.get_parameter("body_frame_prefix").value
+        self._body_tf_frames: Tuple[Tuple[int, str], ...] = tuple(
+            (BODY_JOINT_NAMES.index(name), f"{prefix}{suffix}")
+            for name, suffix in BODY_TF_JOINTS
+        )
 
         # ---- Latest-frame state (consumed by status / battery / diag timers) ----
         self._lock = threading.Lock()
@@ -359,6 +500,13 @@ class QuestBridgeNode(Node):
         )
         self._right_joy_pub = self.create_publisher(
             Joy, self.get_parameter("right_controller_joy_topic").value, qos
+        )
+        self._body_pub = self.create_publisher(
+            QuestBody, self.get_parameter("body_topic").value, qos
+        )
+        # Reliable, like the controller flag mirrors, for recording_gate.
+        self._body_fidelity_pub = self.create_publisher(
+            UInt8, self.get_parameter("body_fidelity_topic").value, 10
         )
 
         self._tf_broadcaster = TransformBroadcaster(self)
@@ -447,6 +595,7 @@ class QuestBridgeNode(Node):
         self._publish_quest_messages(frame, recv_stamp)
         self._publish_tf_from_data(frame.raw, recv_stamp)
         self._publish_joy_from_data(frame.raw, recv_stamp)
+        self._publish_body(frame, recv_stamp)
 
     # ----------------------------------------------------------------------
     # New per-sensor publishers (QuestHmd / QuestController).
@@ -516,6 +665,53 @@ class QuestBridgeNode(Node):
         valid_msg.data = msg.valid
         flag_pubs["valid"].publish(valid_msg)
 
+    def _publish_body(self, frame: QuestFrame, recv_stamp) -> None:
+        """Publish QuestBody, its fidelity mirror and SEW TF frames, if sent."""
+        body = _parse_body(frame.raw)
+        if body is None:
+            return
+
+        msg = QuestBody()
+        msg.header.stamp = recv_stamp
+        msg.header.frame_id = self._parent_frame
+        msg.device_time_ns = int(frame.device_time_ns)
+        msg.pc_monotonic_ns = int(frame.pc_monotonic_ns)
+        msg.seq = int(frame.seq)
+        msg.quest_id = frame.quest_id
+        msg.body_time_s = body["time"]
+        msg.confidence = body["confidence"]
+        msg.fidelity = body["fidelity"]
+        msg.calibration_status = body["calibration"]
+        msg.skeleton_changed_count = body["skeleton_changed_count"]
+        poses = body["poses"]
+        msg.joint_names = [_body_joint_name(i) for i in range(len(poses))]
+        msg.poses = [_make_pose(pos, quat) for pos, quat in poses]
+        msg.location_flags = body["flags"]
+        self._body_pub.publish(msg)
+
+        fidelity_msg = UInt8()
+        fidelity_msg.data = body["fidelity"]
+        self._body_fidelity_pub.publish(fidelity_msg)
+
+        if not self._publish_body_tf or not self._transport.connected:
+            return
+        transforms = []
+        for index, child in self._body_tf_frames:
+            if index >= len(poses):
+                continue
+            if body["flags"][index] & _BODY_POSE_VALID != _BODY_POSE_VALID:
+                continue
+            pos, quat = poses[index]
+            t = TransformStamped()
+            t.header.stamp = recv_stamp
+            t.header.frame_id = self._parent_frame
+            t.child_frame_id = child
+            _fill_xyz(t.transform.translation, pos)
+            _fill_xyzw(t.transform.rotation, quat)
+            transforms.append(t)
+        if transforms:
+            self._tf_broadcaster.sendTransform(transforms)
+
     # ----------------------------------------------------------------------
     # Diagnostics / status publishing (unchanged behavior, sourced from
     # transport.metrics() instead of internal fields).
@@ -564,6 +760,19 @@ class QuestBridgeNode(Node):
         def _bool(key: str) -> bool:
             return bool(latest.get(key, False)) if latest else False
 
+        # Only the scalar fields; the joints are not parsed at diag rate.
+        body = latest.get("body") if latest else None
+        body_fidelity = "none"
+        body_confidence = float("nan")
+        if isinstance(body, dict):
+            try:
+                body_fidelity = _BODY_FIDELITY_NAMES.get(
+                    int(body.get("fidelity", 0)), "unknown"
+                )
+                body_confidence = float(body.get("confidence", float("nan")))
+            except (TypeError, ValueError):
+                body_fidelity = "unknown"
+
         return {
             "connected": connected,
             "streaming": bool(streaming),
@@ -580,6 +789,8 @@ class QuestBridgeNode(Node):
             "left_batt_pct": _batt("leftBattPct"),
             "right_batt_pct": _batt("rightBattPct"),
             "hmd_charging": _bool("hmdCharging"),
+            "body_fidelity": body_fidelity,
+            "body_confidence": body_confidence,
         }
 
     def _get_status(self) -> Dict[str, Any]:
