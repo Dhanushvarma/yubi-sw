@@ -82,7 +82,10 @@ def generate_launch_description():
                 default_value=EnvironmentVariable(
                     "ROBOT_VARIANT", default_value="stationary"
                 ),
-                description="Robot variant: stationary | portable (selects config/<variant>/...)",
+                description=(
+                    "Robot variant: stationary | portable | portable_head "
+                    "(selects config/<variant>/...)"
+                ),
             ),
             DeclareLaunchArgument(
                 "use_rviz",

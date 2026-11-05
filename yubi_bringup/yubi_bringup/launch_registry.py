@@ -10,7 +10,7 @@ package — so each launch only spawns its own concern:
 
 - BRINGUP_NODE_REGISTRY     ← yubi_bringup.launch.py
     Hardware/IO nodes brought up regardless of whether data collection runs.
-    (USB cameras, head camera, Quest bridge, encoder.)
+    (USB cameras, head camera, Quest bridge, encoder, static mount TFs.)
 
 - DATA_COLLECTION_NODE_REGISTRY ← yubi_data_collection.launch.py
     Nodes specific to data-collection runs (footpedal, dispatch).
@@ -169,6 +169,63 @@ def _factory_portable_joy_command(params):
     )
 
 
+def _merged_ros_params(param_files: Iterable[Path | str], yaml_key: str) -> dict:
+    """Merge `<yaml_key>.ros__parameters` across param files; later files win."""
+    merged: dict = {}
+    for path in param_files:
+        p = Path(path)
+        if not p.exists():
+            continue
+        with p.open("r") as f:
+            data = yaml.safe_load(f) or {}
+        section = data.get(yaml_key) if isinstance(data, dict) else None
+        if isinstance(section, dict):
+            merged.update(section.get("ros__parameters") or {})
+    return merged
+
+
+_STATIC_TF_POSE_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
+
+
+def static_tf_arguments(param_files: Iterable[Path | str], yaml_key: str) -> list[str]:
+    """Command line for tf2_ros static_transform_publisher from a YAML section.
+
+    The section's ros__parameters hold parent_frame, child_frame and the pose
+    of the child in the parent: x, y, z (m) and roll, pitch, yaw (rad), each
+    defaulting to 0. static_transform_publisher reads only its command line,
+    so the values are turned into arguments here.
+    """
+    params = _merged_ros_params(param_files, yaml_key)
+    missing = [k for k in ("parent_frame", "child_frame") if not params.get(k)]
+    if missing:
+        raise ValueError(f"{yaml_key}: missing {', '.join(missing)}")
+    args: list[str] = []
+    for key in _STATIC_TF_POSE_KEYS:
+        args += [f"--{key}", repr(float(params.get(key, 0.0)))]
+    args += [
+        "--frame-id",
+        str(params["parent_frame"]),
+        "--child-frame-id",
+        str(params["child_frame"]),
+    ]
+    return args
+
+
+def _factory_static_tf(yaml_key: str):
+    def factory(params):
+        from launch_ros.actions import Node
+
+        return Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name=yaml_key,
+            output="screen",
+            arguments=static_tf_arguments(params, yaml_key),
+        )
+
+    return factory
+
+
 BRINGUP_NODE_REGISTRY = [
     {"yaml_key": "left_camera/usb_cam", "factory": _factory_usb_cam("left_camera")},
     {"yaml_key": "right_camera/usb_cam", "factory": _factory_usb_cam("right_camera")},
@@ -176,6 +233,15 @@ BRINGUP_NODE_REGISTRY = [
     {"yaml_key": "/camera/camera", "factory": _factory_realsense},
     {"yaml_key": "quest_bridge_node", "factory": _factory_quest_bridge},
     {"yaml_key": "encoder_node", "factory": _factory_encoder},
+    # Head camera rigidly mounted on the Quest (portable_head).
+    {
+        "yaml_key": "center_camera_mount_tf",
+        "factory": _factory_static_tf("center_camera_mount_tf"),
+    },
+    {
+        "yaml_key": "center_camera_optical_tf",
+        "factory": _factory_static_tf("center_camera_optical_tf"),
+    },
 ]
 
 

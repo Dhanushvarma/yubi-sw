@@ -1,0 +1,77 @@
+# Portable, head-worn — overlay onto common/yubi_devices.yaml
+# Same YUBI hardware as the portable variant (gloves with encoders and wrist
+# cameras, front USB camera, backpack PC), with three changes:
+#   * The Quest is worn on the head. It runs yubi-quest-app, which shows
+#     passthrough and never streams the Quest's own cameras here.
+#   * The front camera is mounted on top of the Quest, so it moves with
+#     quest_hmd (center_camera_mount_tf below).
+#   * The app streams Meta Inside-Out Body Tracking; quest_bridge_node
+#     publishes /quest/body/state and shoulder/elbow/wrist TF frames.
+# Keep the sections shared with portable/yubi_devices.yaml in sync with it.
+
+center_camera/usb_cam:
+  ros__parameters:
+    video_device: "/dev/yubi_center_camera"
+    framerate: 60.0
+    image_width: 640
+    image_height: 480
+    pixel_format: "mjpeg2rgb"
+    io_method: "mmap"
+    camera_name: "center_camera"
+    frame_id: "center_camera_optical_frame"
+    controls:
+      brightness: 50
+      white_balance_automatic: true
+      auto_exposure: 3
+
+# Where the front camera sits on the headset: center_camera_link in quest_hmd
+# (ROS axes: x forward, y left, z up; metres and radians). quest_hmd is the
+# Quest's centre eye. Identity until measured: take the values from your
+# mount's CAD, then refine with a hand-eye calibration.
+center_camera_mount_tf:
+  ros__parameters:
+    parent_frame: "quest_hmd"
+    child_frame: "center_camera_link"
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+# REP 103 optical frame (z forward, x right, y down), usb_cam's frame_id.
+center_camera_optical_tf:
+  ros__parameters:
+    parent_frame: "center_camera_link"
+    child_frame: "center_camera_optical_frame"
+    roll: -1.5707963267948966
+    pitch: 0.0
+    yaw: -1.5707963267948966
+
+quest_bridge_node:
+  ros__parameters:
+    # TF quest_origin -> body_chest, body_{left,right}_{shoulder,elbow,wrist}.
+    publish_body_tf: true
+    body_frame_prefix: "body_"
+
+task_command_dispatch_node:
+  ros__parameters:
+    # Same /portable_joy_command layout as portable
+    # (yubi_bringup/portable_joy_command_node.py):
+    #   [0] quest_x
+    #   [1] quest_b
+    #   [2] gripper double-click | quest_a
+    joy_accept_button: 2
+    joy_reject_button: 1
+    joy_cancel_episode_button: 0
+    joy_rewind_button: -1
+
+
+# Presence markers — spawn the per-gripper double-click detector and the
+# aggregator that publishes /portable_joy_command (consumed by
+# task_command_dispatch_node via the joy_remap_topic launch arg).
+gripper_double_click_node:
+  ros__parameters: {}
+
+portable_joy_command_node:
+  ros__parameters: {}

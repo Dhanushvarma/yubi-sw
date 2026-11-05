@@ -1,0 +1,19 @@
+# Portable, head-worn — overlay onto common/robot_config.yaml
+# Same topics as portable plus body tracking. The body_* shoulder/elbow/wrist
+# frames and the head camera mount are recorded through /tf and /tf_static.
+
+/**:
+  ros__parameters:
+    robot_type: "yubi_portable_head"
+
+    record_topics:
+      __extend__:
+        - "/center_camera/camera_info"
+        - "/center_camera/image_raw/compressed"
+        # Aggregated joy stream consumed by task_command_dispatch_node (variant input).
+        - "/portable_joy_command"
+        # Per-gripper double-click intermediates feeding /portable_joy_command.
+        - "/yubi/gripper/left/double_click_state"
+        - "/yubi/gripper/right/double_click_state"
+        # Meta Inside-Out Body Tracking: all upper-body joints, confidence, fidelity.
+        - "/quest/body/state"

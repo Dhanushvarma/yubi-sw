@@ -74,7 +74,10 @@ def generate_launch_description():
                 default_value=EnvironmentVariable(
                     "ROBOT_VARIANT", default_value="stationary"
                 ),
-                description="Robot variant: stationary | portable (selects config/<variant>/...)",
+                description=(
+                    "Robot variant: stationary | portable | portable_head "
+                    "(selects config/<variant>/...)"
+                ),
             ),
             DeclareLaunchArgument(
                 "joy_remap_topic",
@@ -82,13 +85,13 @@ def generate_launch_description():
                     [
                         "'/portable_joy_command' if '",
                         LaunchConfiguration("robot_variant"),
-                        "' == 'portable' else '/footpedal_states'",
+                        "' in ('portable', 'portable_head') else '/footpedal_states'",
                     ]
                 ),
                 description=(
                     "Topic remapped to /joy for task_command_dispatch_node. "
                     "Stationary default: /footpedal_states (footpedal_node). "
-                    "Portable default: /portable_joy_command (aggregated by "
+                    "Portable and portable_head default: /portable_joy_command (aggregated by "
                     "portable_joy_command_node from gripper double-click + Quest buttons)."
                 ),
             ),

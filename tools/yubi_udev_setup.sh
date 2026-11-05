@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'USAGE'
-Usage: sudo -E ./tools/yubi_udev_setup.sh [--variant stationary|portable]
+Usage: sudo -E ./tools/yubi_udev_setup.sh [--variant stationary|portable|portable_head]
 
 Calibrates the gripper encoders and writes /etc/udev/rules.d/99-yubi-devices.rules.
 
@@ -37,6 +37,12 @@ USAGE
       ;;
   esac
 done
+
+# portable_head has the same USB devices as portable (L/R/center cameras,
+# two ESP32s); only the Quest app and the camera mount differ.
+if [[ "$VARIANT" == "portable_head" ]]; then
+  VARIANT=portable
+fi
 
 case "$VARIANT" in
   stationary) EXPECTED_CAM_COUNT=2 ;;

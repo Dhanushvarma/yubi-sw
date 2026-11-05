@@ -342,13 +342,136 @@ class TestPortableInvariants:
 
 
 # ---------------------------------------------------------------------------
+# TestPortableHeadInvariants — portable_head structure assertions
+# ---------------------------------------------------------------------------
+def _load(path):
+    with path.open() as f:
+        return yaml.safe_load(f)
+
+
+class TestPortableHeadInvariants:
+    @pytest.fixture(scope="class")
+    def runtime(self):
+        merger.build(config_root=CONFIG_ROOT, variant="portable_head", with_local=False)
+        return CONFIG_ROOT / "_runtime" / "portable_head"
+
+    def test_robot_type(self, runtime):
+        data = _load(runtime / "robot_config.yaml")
+        assert data["/**"]["ros__parameters"]["robot_type"] == "yubi_portable_head"
+
+    def test_record_topics_superset_of_portable_plus_body(self, runtime):
+        merger.build(config_root=CONFIG_ROOT, variant="portable", with_local=False)
+        portable = _load(CONFIG_ROOT / "_runtime" / "portable" / "robot_config.yaml")
+        head = _load(runtime / "robot_config.yaml")
+        portable_topics = portable["/**"]["ros__parameters"]["record_topics"]
+        head_topics = head["/**"]["ros__parameters"]["record_topics"]
+        assert set(head_topics) - set(portable_topics) == {"/quest/body/state"}
+        assert set(portable_topics) <= set(head_topics)
+        assert "/tf_static" in head_topics
+
+    def test_shared_device_sections_match_portable(self):
+        portable = _load(CONFIG_ROOT / "portable" / "yubi_devices.yaml")
+        head = _load(CONFIG_ROOT / "portable_head" / "yubi_devices.yaml")
+        for key in (
+            "center_camera/usb_cam",
+            "task_command_dispatch_node",
+            "gripper_double_click_node",
+            "portable_joy_command_node",
+        ):
+            assert head[key] == portable[key], f"{key} differs from portable"
+        assert "footpedal_node" not in head
+
+    def test_head_camera_gate_matches_portable(self, runtime):
+        portable = _load(CONFIG_ROOT / "portable" / "recording_gate.yaml")
+        head = _load(CONFIG_ROOT / "portable_head" / "recording_gate.yaml")
+        assert (
+            head["groups"]["health"]["conditions"]
+            == portable["groups"]["health"]["conditions"]
+        )
+
+    def test_body_tracking_gate(self, runtime):
+        data = _load(runtime / "recording_gate.yaml")
+        conditions = data["groups"]["body_tracking"]["conditions"]
+        warn = conditions["body_tracking_timeout_warn"]
+        stop = conditions["body_tracking_timeout_stop"]
+        fidelity = conditions["body_tracking_fidelity_warn"]
+        for cond in (warn, stop, fidelity):
+            assert cond["topic"] == "/quest/body/fidelity"
+        assert (warn["timeout_sec"], warn["escalation"]) == (1.0, 1)
+        assert (stop["timeout_sec"], stop["escalation"]) == (3.0, 2)
+        assert fidelity["condition"] == "msg.data == 2"
+        assert fidelity["escalation"] == 1
+        # The common hand-camera and gripper checks still apply.
+        assert "left_camera_timeout_stop" in data["groups"]["health"]["conditions"]
+
+    def test_head_camera_mount_tfs(self):
+        from yubi_bringup.launch_registry import static_tf_arguments  # noqa: WPS433
+
+        files = [
+            CONFIG_ROOT / "common" / "yubi_devices.yaml",
+            CONFIG_ROOT / "portable_head" / "yubi_devices.yaml",
+        ]
+        mount = static_tf_arguments(files, "center_camera_mount_tf")
+        assert mount[-4:] == [
+            "--frame-id",
+            "quest_hmd",
+            "--child-frame-id",
+            "center_camera_link",
+        ]
+        optical = dict(
+            zip(*[iter(static_tf_arguments(files, "center_camera_optical_tf"))] * 2)
+        )
+        assert optical["--frame-id"] == "center_camera_link"
+        assert optical["--child-frame-id"] == "center_camera_optical_frame"
+        assert float(optical["--roll"]) == pytest.approx(-1.5707963267948966)
+        assert float(optical["--pitch"]) == 0.0
+        assert float(optical["--yaw"]) == pytest.approx(-1.5707963267948966)
+        assert float(optical["--x"]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestStaticTfArguments — static_transform_publisher command line from YAML
+# ---------------------------------------------------------------------------
+class TestStaticTfArguments:
+    def test_later_files_override_and_defaults_fill(self, tmp_path):
+        from yubi_bringup.launch_registry import static_tf_arguments  # noqa: WPS433
+
+        base = tmp_path / "a.yaml"
+        local = tmp_path / "b.yaml"
+        section = {"parent_frame": "p", "child_frame": "c", "x": 0.1, "yaw": 1.0}
+        _write_yaml(base, {"mount_tf": {"ros__parameters": section}})
+        _write_yaml(local, {"mount_tf": {"ros__parameters": {"x": 2, "z": -0.5}}})
+
+        args = static_tf_arguments([base, local, tmp_path / "missing.yaml"], "mount_tf")
+
+        assert args == [
+            "--x", "2.0",
+            "--y", "0.0",
+            "--z", "-0.5",
+            "--roll", "0.0",
+            "--pitch", "0.0",
+            "--yaw", "1.0",
+            "--frame-id", "p",
+            "--child-frame-id", "c",
+        ]  # fmt: skip
+
+    def test_missing_frames_raise(self, tmp_path):
+        from yubi_bringup.launch_registry import static_tf_arguments  # noqa: WPS433
+
+        path = tmp_path / "a.yaml"
+        _write_yaml(path, {"mount_tf": {"ros__parameters": {"parent_frame": "p"}}})
+        with pytest.raises(ValueError, match="child_frame"):
+            static_tf_arguments([path], "mount_tf")
+
+
+# ---------------------------------------------------------------------------
 # TestNodeRegistry — registry <-> YAML key bidirectional consistency
 # ---------------------------------------------------------------------------
 class TestNodeRegistry:
     @pytest.fixture(scope="class")
     def keys_per_variant(self):
         keys = {}
-        for variant in ("common", "stationary", "portable"):
+        for variant in ("common", "stationary", "portable", "portable_head"):
             with (CONFIG_ROOT / variant / "yubi_devices.yaml").open() as f:
                 data = yaml.safe_load(f) or {}
             keys[variant] = set(data.keys())
