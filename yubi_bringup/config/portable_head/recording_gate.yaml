@@ -1,7 +1,8 @@
 # Portable, head-worn — overlay onto common/recording_gate.yaml
 # Head camera conditions as in portable/recording_gate.yaml (keep in sync),
-# plus body tracking: a start needs body data from Inside-Out Body Tracking
-# (IOBT), and an episode is cancelled if body data stops for 3 s.
+# plus body tracking: a start needs high-fidelity, calibrated body data from
+# Inside-Out Body Tracking (IOBT), and an episode is cancelled if body data
+# stops for 3 s.
 
 groups:
   health:
@@ -37,8 +38,10 @@ groups:
         reason: "Center (USB) camera frame rate below 15 Hz ({detail})"
 
   # ---------------------------------------------------------------------------
-  # Body tracking — /quest/body/fidelity (std_msgs/UInt8, reliable mirror of
-  # QuestBody.fidelity, published with every pose sample that has body data)
+  # Body tracking — /quest/body/fidelity and /quest/body/calibration
+  # (std_msgs/UInt8, reliable mirrors of QuestBody.fidelity and
+  # QuestBody.calibration_status, published with every pose sample that has
+  # body data)
   # ---------------------------------------------------------------------------
   body_tracking:
     recovery_sec: 0.5
@@ -65,3 +68,14 @@ groups:
         escalation: 1
         debounce_sec: 0.5
         reason: "Body tracking is low fidelity; IOBT is not tracking the arms"
+
+      # IOBT calibrates the body for about 10-15 s after the headset goes on
+      # (calibration_status 2); arm lengths and wrists are wrong until it
+      # reports 1 (valid) → warn (BLOCK_START), so takes start calibrated.
+      body_tracking_calibration_warn:
+        topic: /quest/body/calibration
+        condition: "msg.data == 1"
+        timeout_sec: 1.0
+        escalation: 1
+        debounce_sec: 0.5
+        reason: "Body tracking is still calibrating; wait about 15 s after putting the headset on"

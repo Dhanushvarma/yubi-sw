@@ -369,12 +369,15 @@ The portable hardware with the Quest worn on the head instead of the chest:
   (`center_camera_mount_tf` in `config/portable_head/yubi_devices.yaml`, identity
   until you enter your mount's values), then `center_camera_optical_frame`.
 - **Body tracking:** `quest_bridge_node` publishes `/quest/body/state`
-  (`airoa_quest_msgs/QuestBody`: the 70 upper-body joints with confidence and
-  fidelity), `/quest/body/fidelity`, and TF frames `body_chest` and
-  `body_{left,right}_{shoulder,elbow,wrist}` under `quest_origin`.
+  (`airoa_quest_msgs/QuestBody`: the 70 upper-body joints with confidence,
+  fidelity and calibration status), the `std_msgs/UInt8` mirrors
+  `/quest/body/fidelity` and `/quest/body/calibration`, and TF frames
+  `body_chest` and `body_{left,right}_{shoulder,elbow,wrist}` under
+  `quest_origin`.
 - **Recording gate:** in addition to the portable checks, a start needs body
-  data with high fidelity (camera-based IOBT), and an episode is cancelled
-  when body data stops for 3 s.
+  data with high fidelity (camera-based IOBT) and valid calibration, and an
+  episode is cancelled when body data stops for 3 s. IOBT calibrates for
+  about 10–15 s after the headset goes on, so wait that long before starting.
 
 ### Config layout
 
