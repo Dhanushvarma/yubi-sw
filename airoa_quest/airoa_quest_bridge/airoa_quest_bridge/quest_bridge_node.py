@@ -25,6 +25,9 @@ Publishes:
   * ``/quest/body/fidelity``                   (std_msgs/UInt8; mirror of
                                                 ``state.fidelity`` for consumers
                                                 without the airoa_quest_msgs dep)
+  * ``/quest/body/calibration``                (std_msgs/UInt8; mirror of
+                                                ``state.calibration_status``,
+                                                likewise)
   * ``/tf``                                    (live RViz/Foxglove and IK
                                                 consumers such as umi_ik_checker;
                                                 with body data also
@@ -364,6 +367,7 @@ _TOPIC_PARAMS: Tuple[Tuple[str, str], ...] = (
     ("right_controller_battery_topic", "/quest/controller/right/battery"),
     ("body_topic", "/quest/body/state"),
     ("body_fidelity_topic", "/quest/body/fidelity"),
+    ("body_calibration_topic", "/quest/body/calibration"),
 )
 
 
@@ -507,6 +511,9 @@ class QuestBridgeNode(Node):
         # Reliable, like the controller flag mirrors, for recording_gate.
         self._body_fidelity_pub = self.create_publisher(
             UInt8, self.get_parameter("body_fidelity_topic").value, 10
+        )
+        self._body_calibration_pub = self.create_publisher(
+            UInt8, self.get_parameter("body_calibration_topic").value, 10
         )
 
         self._tf_broadcaster = TransformBroadcaster(self)
@@ -666,7 +673,7 @@ class QuestBridgeNode(Node):
         flag_pubs["valid"].publish(valid_msg)
 
     def _publish_body(self, frame: QuestFrame, recv_stamp) -> None:
-        """Publish QuestBody, its fidelity mirror and SEW TF frames, if sent."""
+        """Publish QuestBody, its UInt8 mirrors and SEW TF frames, if sent."""
         body = _parse_body(frame.raw)
         if body is None:
             return
@@ -692,6 +699,9 @@ class QuestBridgeNode(Node):
         fidelity_msg = UInt8()
         fidelity_msg.data = body["fidelity"]
         self._body_fidelity_pub.publish(fidelity_msg)
+        calibration_msg = UInt8()
+        calibration_msg.data = body["calibration"]
+        self._body_calibration_pub.publish(calibration_msg)
 
         if not self._publish_body_tf or not self._transport.connected:
             return

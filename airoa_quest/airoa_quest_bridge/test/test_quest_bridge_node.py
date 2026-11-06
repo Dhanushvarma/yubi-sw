@@ -518,6 +518,8 @@ def test_publish_body_message_fields(node_module):
 
     (fidelity,) = node.published["/quest/body/fidelity"]
     assert fidelity.data == 2
+    (calibration,) = node.published["/quest/body/calibration"]
+    assert calibration.data == 1
 
 
 def test_publish_body_names_joints_beyond_the_table(node_module):
@@ -540,6 +542,7 @@ def test_publish_body_skips_frames_without_body(node_module):
 
     assert node.published["/quest/body/state"] == []
     assert node.published["/quest/body/fidelity"] == []
+    assert node.published["/quest/body/calibration"] == []
     node._tf_broadcaster.sendTransform.assert_not_called()
 
 
